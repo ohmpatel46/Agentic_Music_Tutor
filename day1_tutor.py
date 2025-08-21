@@ -200,6 +200,7 @@ def main() -> None:
         default=1,
         help="Number of input channels when recording (default: 1).",
     )
+    # does hop size mean skip frames?
     parser.add_argument(
         "--hop-size",
         type=int,

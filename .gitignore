@@ -1,2 +1,4 @@
-*.wav
-*.dat
+Data/
+mic_test.py
+dat_to_wav.py
+__pycache__/
