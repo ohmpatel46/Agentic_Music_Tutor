@@ -66,7 +66,7 @@ class LLMAnalyzer:
         
         # Build the prompt
         prompt = f"""You are an expert music teacher analyzing a student's scale performance. 
-Provide concise, actionable feedback in exactly 3 sections with bullet points.
+Provide exactly 3 bullet points for each of the 3 sections. Use newlines for each bullet point.
 
 PERFORMANCE DATA:
 Scale: {perf_summary.get('scale_name', 'Unknown')}
@@ -74,6 +74,11 @@ Tempo: {perf_summary.get('tempo_bpm', 0)} BPM
 Session Duration: {perf_summary.get('session_duration', 0):.1f}s
 Notes Completed: {perf_summary.get('notes_completed', 0)}
 Overall Rating: {perf_summary.get('overall_rating', 'Unknown')}
+
+{self._get_scale_position_mapping(perf_summary.get('scale_name', 'Unknown'))}
+
+DETAILED TIMING ANALYSIS:
+{self._analyze_timing_patterns(data)}
 
 TIMING METRICS:
 - Average Delay: {timing_stats.get('average_delay', 0):.2f}s
@@ -107,28 +112,46 @@ DETAILED NOTE ANALYSIS:
         prompt += """
 
 ANALYSIS INSTRUCTIONS:
-Provide exactly 3 sections with concise, musical feedback (no exact numbers):
+Provide exactly 3 bullet points for each section. Use newlines for each bullet point.
+Use the scale position mapping above to reference specific notes.
+
+FOLLOW THIS EXACT FORMAT (adapt the content based on actual results):
 
 1. TIMING FEEDBACK:
-   • Comment on overall rhythm consistency
-   • Identify if student is rushing or dragging
-   • Give general timing improvement tips
+• [Specific note transition with timing issue] - [specific improvement tip]
+• [Another specific transition issue] - [specific improvement tip]  
+• [Overall timing improvement suggestion]
 
 2. AUDIO QUALITY FEEDBACK:
-   • Note any buzzing, intonation, or technique issues
-   • Comment on note sustain and attack quality
-   • Reference specific notes by their position (first note, middle notes, etc.)
+• [Specific note with quality issue] - [specific technique tip]
+• [Note with good quality] - [encouragement to maintain]
+• [General quality improvement area] - [specific practice focus]
 
-3. PRACTICE TIPS + ENCOURAGEMENT:
-   • 2-3 specific practice exercises
-   • 1 encouraging comment about what went well
+3. PRACTICE TIPS:
+• [Specific exercise for identified timing issue]
+• [Specific exercise for identified quality issue]
+• [Encouraging comment about what went well]
 
-IMPORTANT: 
-- Give general musical advice, not exact millisecond targets
-- Use musical terminology (rushing, dragging, buzzing, intonation)
-- Be encouraging and constructive
-- Keep each bullet point under 20 words
-- Focus on overall patterns, not specific numbers
+ADAPTATION RULES:
+- Use the scale position mapping (1:C, 2:D, 3:E, etc.) to reference notes
+- If no timing issues found, focus on maintaining good timing
+- If no quality issues found, focus on maintaining good technique
+- Always provide 3 bullet points per section
+- Keep each bullet point under 25 words
+- Use musical terminology (rushing, dragging, buzzing, intonation, sustain, attack)
+- Be specific about which notes have issues and which are good
+- Use the detailed timing analysis provided above for specific feedback
+
+EXAMPLE ADAPTATION:
+If the data shows C to D was rushed by 0.15s and Note 3 (E) has buzzing:
+• C to D transition was rushed - focus on maintaining steady tempo
+• Note 3 (E) has slight buzzing - check finger placement
+• Practice C to D transition slowly to fix rushing habit
+
+If the data shows good timing but some quality issues:
+• Excellent timing consistency throughout the scale
+• Note 5 (G) shows good sustain quality - maintain this technique
+• Work on finger independence exercises for buzzing issues
 
 ANALYSIS:
 """
@@ -186,6 +209,79 @@ ANALYSIS:
             return response.status_code == 200
         except:
             return False
+
+    def _get_scale_position_mapping(self, scale_name: str) -> str:
+        """Create a 1-1 mapping of scale positions to note names."""
+        scale_notes = self._get_scale_notes_from_name(scale_name)
+        
+        mapping = "SCALE POSITION MAPPING:\n"
+        for i, note in enumerate(scale_notes):
+            mapping += f"{i+1}: {note}\n"
+        
+        return mapping
+    
+    def _analyze_timing_patterns(self, data: Dict) -> str:
+        """Analyze timing data and identify specific note transitions with delays."""
+        try:
+            timing_stats = data.get("timing_analysis", {})
+            note_delays = timing_stats.get("note_delays", [])
+            
+            if len(note_delays) < 2:
+                return "Insufficient timing data for analysis."
+            
+            # Get scale notes for reference
+            scale_name = data.get("performance_summary", {}).get("scale_name", "")
+            scale_notes = self._get_scale_notes_from_name(scale_name)
+            
+            # Find delays greater than threshold (e.g., 0.1s)
+            delay_threshold = 0.1
+            problematic_transitions = []
+            
+            for i, delay in enumerate(note_delays[1:], 1):  # Skip first note (no delay)
+                if abs(delay) > delay_threshold:
+                    if i < len(scale_notes) and i-1 < len(scale_notes):
+                        from_note = scale_notes[i-1]
+                        to_note = scale_notes[i]
+                        transition_type = "rushed" if delay < 0 else "delayed"
+                        problematic_transitions.append({
+                            "from": from_note,
+                            "to": to_note,
+                            "delay": delay,
+                            "type": transition_type
+                        })
+            
+            # Format the timing analysis
+            if problematic_transitions:
+                timing_analysis = "TIMING ISSUES IDENTIFIED:\n"
+                for transition in problematic_transitions:
+                    timing_analysis += f"• {transition['from']} to {transition['to']}: {transition['type']} by {abs(transition['delay']):.2f}s\n"
+                
+                # Add overall timing summary
+                avg_delay = timing_stats.get("average_delay", 0)
+                consistency = timing_stats.get("timing_consistency", 0)
+                
+                timing_analysis += f"\nOVERALL TIMING:\n"
+                timing_analysis += f"• Average delay: {avg_delay:.2f}s\n"
+                timing_analysis += f"• Consistency score: {consistency:.2f} (0-1, higher is better)\n"
+                
+                return timing_analysis
+            else:
+                return "TIMING ANALYSIS: All note transitions were within acceptable timing range."
+                
+        except Exception as e:
+            print(f"Error analyzing timing patterns: {e}")
+            return "Error analyzing timing patterns."
+    
+    def _get_scale_notes_from_name(self, scale_name: str) -> List[str]:
+        """Get scale notes from scale name."""
+        scale_notes = {
+            "C Major Scale": ["C", "D", "E", "F", "G", "A", "B", "C"],
+            "G Major Scale": ["G", "A", "B", "C", "D", "E", "F#", "G"],
+            "D Major Scale": ["D", "E", "F#", "G", "A", "B", "C#", "D"],
+            "A Minor Scale": ["A", "B", "C", "D", "E", "F", "G", "A"],
+            "E Minor Scale": ["E", "F#", "G", "A", "B", "C", "D", "E"]
+        }
+        return scale_notes.get(scale_name, ["C", "D", "E", "F", "G", "A", "B", "C"])
 
 
 

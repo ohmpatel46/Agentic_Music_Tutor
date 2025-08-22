@@ -602,13 +602,13 @@ def render_llm_analysis_section():
         analysis_text = st.session_state.llm_analysis
         
         # Try to parse the sections
-        if "1. TIMING FEEDBACK:" in analysis_text and "2. AUDIO QUALITY FEEDBACK:" in analysis_text and "3. PRACTICE TIPS + ENCOURAGEMENT:" in analysis_text:
+        if "1. TIMING FEEDBACK:" in analysis_text and "2. AUDIO QUALITY FEEDBACK:" in analysis_text and "3. PRACTICE TIPS:" in analysis_text:
             # Split into sections
             sections = analysis_text.split("1. TIMING FEEDBACK:")
             if len(sections) > 1:
                 timing_section = sections[1].split("2. AUDIO QUALITY FEEDBACK:")[0].strip()
-                audio_section = sections[1].split("2. AUDIO QUALITY FEEDBACK:")[1].split("3. PRACTICE TIPS + ENCOURAGEMENT:")[0].strip()
-                practice_section = sections[1].split("3. PRACTICE TIPS + ENCOURAGEMENT:")[1].strip()
+                audio_section = sections[1].split("2. AUDIO QUALITY FEEDBACK:")[1].split("3. PRACTICE TIPS:")[0].strip()
+                practice_section = sections[1].split("3. PRACTICE TIPS:")[1].strip()
                 
                 # Display in structured format - truly side-by-side with compact cards
                 col1, col2, col3 = st.columns(3)
@@ -633,8 +633,8 @@ def render_llm_analysis_section():
                     """, unsafe_allow_html=True)
                 
                 with col3:
-                    st.markdown("**💡 Practice Tips + Encouragement**")
-                    practice_clean = practice_section.replace("3. PRACTICE TIPS + ENCOURAGEMENT:", "").strip()
+                    st.markdown("**💡 Practice Tips**")
+                    practice_clean = practice_section.replace("3. PRACTICE TIPS:", "").strip()
                     st.markdown(f"""
                     <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;">
                     {practice_clean}
