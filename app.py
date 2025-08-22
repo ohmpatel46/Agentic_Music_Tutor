@@ -9,13 +9,16 @@ from config import (
     SAMPLE_RATE, CHANNELS, HOP_SIZE, BUFFER_SIZE,
     DEFAULT_CONFIDENCE_THRESHOLD, DEFAULT_CHUNK_DURATION,
     DEFAULT_ALGORITHM_MODE, ALGORITHM_MODES,
-    PAGE_TITLE, PAGE_ICON, LAYOUT, INITIAL_SIDEBAR_STATE
+    PAGE_TITLE, PAGE_ICON, LAYOUT,
+    DEFAULT_TEMPO_BPM, TEMPO_MIN_BPM, TEMPO_MAX_BPM,
+    NOTE_TIMING_TOLERANCE
 )
 from utils import load_ground_truth, calculate_accuracy
 from note_detector import detect_note_from_frame
 from audio_processor import record_audio_chunk, get_audio_stats
 from visualizations import create_waveform_plot, create_note_display_plot
-from styles import MAIN_STYLES, get_main_header_html, get_note_display_html
+from styles import MAIN_STYLES, get_note_display_html
+from scale_trainer import ScaleTrainer
 
 # Import required libraries with error handling
 try:
@@ -43,43 +46,8 @@ def initialize_session_state():
         st.session_state.start_time = None
     if 'last_note_time' not in st.session_state:
         st.session_state.last_note_time = 0
-
-
-def render_sidebar(song_name: str, expected_notes: List[str]):
-    """Render the sidebar with settings and parameters."""
-    with st.sidebar:
-        st.header("🎵 Settings")
-        st.write(f"**Song**: {song_name}")
-        st.write(f"**Expected**: {', '.join(expected_notes)}")
-        
-        st.header("🎚️ Detection Parameters")
-        confidence_threshold = st.slider(
-            "Confidence Threshold", 
-            0.1, 1.0, 
-            DEFAULT_CONFIDENCE_THRESHOLD, 
-            0.05
-        )
-        chunk_duration = st.slider(
-            "Chunk Duration (seconds)", 
-            0.1, 2.0, 
-            DEFAULT_CHUNK_DURATION, 
-            0.1
-        )
-        
-        st.subheader("🎵 Pitch Detection Algorithm")
-        algorithm_mode = st.selectbox(
-            "Algorithm Mode",
-            ALGORITHM_MODES,
-            index=0
-        )
-        
-        st.header("📊 Audio Settings")
-        st.write(f"Sample Rate: {SAMPLE_RATE} Hz")
-        st.write(f"Channels: {CHANNELS}")
-        st.write(f"Hop Size: {HOP_SIZE}")
-        st.write(f"Buffer Size: {BUFFER_SIZE}")
-        
-        return confidence_threshold, chunk_duration, algorithm_mode
+    if 'scale_trainer' not in st.session_state:
+        st.session_state.scale_trainer = ScaleTrainer()
 
 
 def render_recording_controls():
@@ -161,6 +129,111 @@ def render_visualizations():
         st.plotly_chart(fig, use_container_width=True)
 
 
+def render_scale_training_progress():
+    """Render the scale training progress and timing analysis."""
+    progress = st.session_state.scale_trainer.get_training_progress()
+    
+    if progress["status"] == "training":
+        st.header("🎼 Scale Training Progress")
+        
+        # Progress bar
+        st.progress(progress["progress_percentage"] / 100)
+        st.write(f"**Progress**: {progress['completed_notes']}/{progress['total_notes']} notes ({progress['progress_percentage']:.1f}%)")
+        
+        # Current status
+        if progress["next_expected_note"]:
+            st.info(f"**Next Note**: {progress['next_expected_note']} at {progress['next_expected_time']:.2f}s")
+        
+        # Timing accuracy
+        if progress["average_delay"] > 0:
+            st.metric("Average Delay", f"{progress['average_delay']:.2f}s")
+        else:
+            st.metric("Average Delay", "N/A")
+        
+        # Scale visualization
+        scale_info = st.session_state.scale_trainer.get_scale_info()
+        notes = scale_info["notes"]
+        
+        # Create a visual representation of the scale
+        st.subheader("Scale Progress")
+        for i, note in enumerate(notes):
+            if i < progress["current_note_index"]:
+                st.success(f"✅ {note}")  # Completed
+            elif i == progress["current_note_index"]:
+                st.info(f"🎯 {note}")    # Current
+            else:
+                st.write(f"⏳ {note}")    # Pending
+    else:
+        st.header("🎼 Scale Training")
+        st.info("Click 'Start Training' to begin the C Major scale exercise")
+
+
+def render_scale_visualization():
+    """Render the scale visualization with single display and metronome."""
+    st.subheader("🎼 Scale Progress")
+    
+    # Single scale display
+    scale_info = st.session_state.scale_trainer.get_scale_info()
+    notes = scale_info["notes"]
+    
+    # Create single scale visualization
+    scale_html = ""
+    for i, note in enumerate(notes):
+        # Check if this note has been detected
+        note_detected = False
+        note_timing = ""
+        note_delay = ""
+        
+        if st.session_state.detected_notes and i < len(st.session_state.detected_notes):
+            note_detected = True
+            # Get timing info for this note
+            if st.session_state.scale_trainer.is_training and st.session_state.scale_trainer.start_time:
+                if i == 0:
+                    note_timing = "Expected: 0.0s"
+                    note_delay = "Delay: 0.0s"
+                else:
+                    # For note-by-note delay calculation
+                    if i < len(st.session_state.scale_trainer.note_delays):
+                        # Get the delay for this specific note transition
+                        note_timing = f"Expected: {i * (60.0 / st.session_state.scale_trainer.tempo_bpm):.1f}s"
+                        
+                        # Get the delay directly from the note_delays list
+                        delay = st.session_state.scale_trainer.note_delays[i]
+                        note_delay = f"Delay: {delay:+.1f}s"
+                    else:
+                        note_timing = f"Expected: {i * (60.0 / st.session_state.scale_trainer.tempo_bpm):.1f}s"
+                        note_delay = "Delay: --"
+            else:
+                # Fallback for when training state is unclear
+                note_timing = "Expected: --"
+                note_delay = "Delay: --"
+        else:
+            # Undetected notes - show expected time when training
+            if st.session_state.scale_trainer.is_training or (st.session_state.detected_notes and len(st.session_state.detected_notes) > 0):
+                if i == 0:
+                    note_timing = "Expected: 0.0s"
+                    note_delay = "Delay: --"
+                else:
+                    expected_time = i * (60.0 / st.session_state.scale_trainer.tempo_bpm)
+                    note_timing = f"Expected: {expected_time:.1f}s"
+                    note_delay = "Delay: --"
+            else:
+                note_timing = "Expected: --"
+                note_delay = "Delay: --"
+        
+        # Determine card color and timing info
+        if note_detected:
+            # Green card for detected notes
+            card_html = f'<div style="display: inline-block; margin: 0.5rem; padding: 0.5rem 1rem; background: #e8f5e8; border: 2px solid #4caf50; border-radius: 8px; text-align: center; min-width: 80px;"><div style="font-weight: bold; color: #2e7d32; margin-bottom: 0.5rem;">{note}</div><div style="font-size: 0.8rem; color: #666; margin-bottom: 0.2rem;">{note_timing}</div><div style="font-size: 0.8rem; color: #666;">{note_delay}</div></div>'
+        else:
+            # Bland color for undetected notes
+            card_html = f'<div style="display: inline-block; margin: 0.5rem; padding: 0.5rem 1rem; background: #f5f5f5; border: 2px solid #e0e0e0; border-radius: 8px; text-align: center; min-width: 80px;"><div style="font-weight: bold; color: #757575; margin-bottom: 0.5rem;">{note}</div><div style="font-size: 0.8rem; color: #999; margin-bottom: 0.2rem;">{note_timing}</div><div style="font-size: 0.8rem; color: #999;">{note_delay}</div></div>'
+        
+        scale_html += card_html
+    
+    st.markdown(scale_html, unsafe_allow_html=True)
+
+
 def process_audio_chunk(chunk_duration: float, confidence_threshold: float, algorithm_mode: str):
     """Process a single audio chunk for real-time note detection."""
     # Record a small audio chunk
@@ -181,9 +254,29 @@ def process_audio_chunk(chunk_duration: float, confidence_threshold: float, algo
                 detected_note != st.session_state.detected_notes[-1] or
                 current_time - st.session_state.last_note_time > 0.5):  # 500ms minimum between notes
                 
-                st.session_state.detected_notes.append(detected_note)
-                st.session_state.last_note_time = current_time
-                st.success(f"🎵 New note detected: {detected_note} (via {algorithm_used}, conf: {confidence_score:.3f})")
+                # For scale training, check if this is the correct next note
+                if st.session_state.scale_trainer.is_training:
+                    expected_note = st.session_state.scale_trainer.get_expected_note()
+                    if detected_note == expected_note:
+                        # Correct note - add to detected notes and update training
+                        st.session_state.detected_notes.append(detected_note)
+                        st.session_state.last_note_time = current_time
+                        st.success(f"🎵 Correct note detected: {detected_note} (via {algorithm_used}, conf: {confidence_score:.3f})")
+                        
+                        # Update scale trainer
+                        timing_result = st.session_state.scale_trainer.check_note_timing(detected_note)
+                        if timing_result[0]:  # Note was processed
+                            timing_error, expected_time = timing_result[1], timing_result[2]
+                            if timing_error > NOTE_TIMING_TOLERANCE:
+                                st.warning(f"⏰ Note correct but timing off by {timing_error:.2f}s")
+                    else:
+                        # Wrong note - show warning but don't progress
+                        st.warning(f"❌ Wrong note detected: {detected_note}. Expected: {expected_note}")
+                else:
+                    # Free play mode - add any detected note
+                    st.session_state.detected_notes.append(detected_note)
+                    st.session_state.last_note_time = current_time
+                    st.success(f"🎵 New note detected: {detected_note} (via {algorithm_used}, conf: {confidence_score:.3f})")
         else:
             detected_note = None
         
@@ -203,30 +296,107 @@ def main():
     st.set_page_config(
         page_title=PAGE_TITLE,
         page_icon=PAGE_ICON,
-        layout=LAYOUT,
-        initial_sidebar_state=INITIAL_SIDEBAR_STATE
+        layout="wide",
+        initial_sidebar_state="collapsed"
     )
     
-    # Apply custom CSS
+    # Apply custom CSS for navbar and layout
     st.markdown(MAIN_STYLES, unsafe_allow_html=True)
-    
-    # Header
-    st.markdown(get_main_header_html(), unsafe_allow_html=True)
-    
-    # Load ground truth
-    song_name, expected_notes = load_ground_truth()
     
     # Initialize session state
     initialize_session_state()
     
-    # Sidebar
-    confidence_threshold, chunk_duration, algorithm_mode = render_sidebar(song_name, expected_notes)
+    # Check if user has selected a mode
+    if 'app_mode' not in st.session_state:
+        st.session_state.app_mode = None
+    
+    # Landing page - show mode selection
+    if st.session_state.app_mode is None:
+        render_landing_page()
+    elif st.session_state.app_mode == 'note_detection':
+        render_note_detection_mode()
+    elif st.session_state.app_mode == 'scale_training':
+        render_scale_training_mode()
+    
+    # Settings button at the bottom of the page
+    render_bottom_settings()
+
+
+def render_landing_page():
+    """Render the compact, centered landing page."""
+    # Title Board with the original purplish color
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                color: white; border: 2px solid #dee2e6; border-radius: 15px; padding: 3rem 2rem; 
+                margin: 2rem 0; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+        <h1 style="color: white; margin-bottom: 1rem; font-size: 2.5rem;">🎸 Agentic Music Tutor</h1>
+        <h2 style="color: white; margin-bottom: 1.5rem; font-size: 1.8rem;">Your Musical Journey Starts Here</h2>
+        <p style="font-size: 1.2rem; color: rgba(255,255,255,0.9); line-height: 1.6; max-width: 500px; margin: 0 auto;">
+            Choose your learning path below and start developing your musical skills with AI-powered guidance
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Pathway Cards and Buttons
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Free Play Card
+        st.markdown("""
+        <div style="background: white; border: 2px solid #e0e0e0; border-radius: 15px; 
+                    padding: 2rem; margin: 1rem 0; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center;">
+            <h3 style="color: #28a745; margin-bottom: 1rem; font-size: 1.4rem;">🎵 Free Play Mode</h3>
+            <p style="color: #555; line-height: 1.5; margin-bottom: 1.5rem;">
+                Practice note detection and pitch recognition without constraints. 
+                Perfect for exploring your instrument and improving your ear training.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Button with same width as card
+        if st.button("🎵 Start Free Play", key="free_play_btn", use_container_width=False):
+            st.session_state.app_mode = 'note_detection'
+            st.rerun()
+    
+    with col2:
+        # Scale Training Card
+        st.markdown("""
+        <div style="background: white; border: 2px solid #e0e0e0; border-radius: 15px; 
+                    padding: 2rem; margin: 1rem 0; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center;">
+            <h3 style="color: #007bff; margin-bottom: 1rem; font-size: 1.4rem;">🎼 Scale Training</h3>
+            <p style="color: #555; line-height: 1.5; margin-bottom: 1.5rem;">
+                Learn major and minor scales with tempo-based timing analysis. 
+                Choose from C Major, G Major, D Major, A Minor, and E Minor scales.
+                Develop rhythm, timing, and scale proficiency with real-time feedback.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Button with same width as card
+        if st.button("🎼 Start Scale Training", key="scale_training_btn", use_container_width=False):
+            st.session_state.app_mode = 'scale_training'
+            st.rerun()
+
+
+def render_note_detection_mode():
+    """Render the free play note detection mode."""
+    st.header("🎵 Free Play Mode")
+    
+    # Back button
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col1:
+        if st.button("← Back to Landing", key="back_note_detection"):
+            st.session_state.app_mode = None
+            st.rerun()
+    
+    # Load ground truth
+    song_name, expected_notes = load_ground_truth()
     
     # Main content
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.header("🎙️ Recording")
+        st.subheader("🎙️ Recording")
         
         # Recording controls
         render_recording_controls()
@@ -245,10 +415,171 @@ def main():
     
     # Real-time audio capture and note detection
     if st.session_state.recording:
-        process_audio_chunk(chunk_duration, confidence_threshold, algorithm_mode)
-        
-        # Force rerun for real-time updates
+        process_audio_chunk(
+            DEFAULT_CHUNK_DURATION, 
+            DEFAULT_CONFIDENCE_THRESHOLD, 
+            DEFAULT_ALGORITHM_MODE
+        )
         st.rerun()
+
+
+def render_scale_training_mode():
+    """Render the scale training mode with integrated settings."""
+    st.header("🎼 Scale Training Mode")
+    
+    # Back button
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col1:
+        if st.button("← Back to Landing", key="back_scale_training"):
+            st.session_state.app_mode = None
+            st.rerun()
+    
+    # Scale training settings (moved from sidebar to main page)
+    st.subheader("⚙️ Training Settings")
+    
+    # Scale selector dropdown
+    available_scales = st.session_state.scale_trainer.get_available_scales()
+    scale_names = [scale['name'] for scale in available_scales]
+    
+    if scale_names:
+        selected_scale = st.selectbox(
+            "Select Scale:",
+            scale_names,
+            index=0,  # Default to first scale
+            key="scale_selector"
+        )
+        
+        # Load selected scale if different from current
+        current_scale = st.session_state.scale_trainer.scale_data.get('scale_name', '')
+        if selected_scale != current_scale:
+            if st.session_state.scale_trainer.load_scale_by_name(selected_scale):
+                st.success(f"Loaded {selected_scale}")
+                st.rerun()
+            else:
+                st.error(f"Failed to load {selected_scale}")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        scale_info = st.session_state.scale_trainer.get_scale_info()
+        st.write(f"**Scale**: {scale_info['name']}")
+        st.write(f"**Notes**: {' → '.join(scale_info['notes'])}")
+    
+    with col2:
+        # Tempo control
+        tempo_bpm = st.slider(
+            "Tempo (BPM)",
+            TEMPO_MIN_BPM, TEMPO_MAX_BPM,
+            st.session_state.scale_trainer.tempo_bpm,
+            5
+        )
+        
+        # Update tempo when changed
+        if tempo_bpm != st.session_state.scale_trainer.tempo_bpm:
+            st.session_state.scale_trainer.set_tempo(tempo_bpm)
+    
+    with col3:
+        # Training controls
+        scale_name = st.session_state.scale_trainer.scale_data.get('scale_name', 'Scale')
+        if st.button(f"▶️ Start {scale_name} Training", use_container_width=True, type="primary"):
+            st.session_state.scale_trainer.start_training()
+            st.session_state.recording = True  # Start recording
+            st.rerun()
+        
+        if st.button("⏹️ Stop Training", use_container_width=True):
+            st.session_state.recording = False  # Only stop recording, preserve training state
+            st.rerun()
+        
+        if st.button("🔄 Restart Training", use_container_width=True):
+            st.session_state.scale_trainer.stop_training()
+            st.session_state.recording = False
+            st.session_state.audio_data = []
+            st.session_state.detected_notes = []
+            st.session_state.start_time = None
+            st.session_state.last_note_time = 0
+            st.rerun()
+    
+    # Scale training progress
+    # render_scale_training_progress()  # Removed - replaced with new visual system
+    
+    # Visual scale progress with time-based positioning
+    render_scale_visualization()
+    
+    # Recording status (only show when training)
+    if st.session_state.scale_trainer.is_training:
+        st.subheader("🎙️ Training Session")
+        render_recording_status()
+        render_detected_notes()
+        
+        # Real-time audio capture and note detection
+        if st.session_state.recording:
+            process_audio_chunk(
+                DEFAULT_CHUNK_DURATION, 
+                DEFAULT_CONFIDENCE_THRESHOLD, 
+                DEFAULT_ALGORITHM_MODE
+            )
+            st.rerun()
+
+
+def render_bottom_settings():
+    """Render the settings button at the bottom of the page."""
+    st.markdown("---")  # Separator line
+    
+    # Settings button at the bottom
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("⚙️ Settings", key="settings_toggle", help="Settings", use_container_width=False):
+            st.session_state.show_settings = not st.session_state.get('show_settings', False)
+            st.rerun()
+    
+    # Settings panel
+    if st.session_state.get('show_settings', False):
+        st.markdown("""
+        <div style="background: white; border: 1px solid #ccc; border-radius: 10px; 
+                    padding: 1.5rem; margin: 1rem 0; box-shadow: 0 4px 15px rgba(0,0,0,0.15);">
+        """, unsafe_allow_html=True)
+        
+        st.subheader("⚙️ Settings")
+        
+        # Detection parameters
+        st.write("**Detection Parameters**")
+        confidence_threshold = st.slider(
+            "Confidence Threshold", 
+            0.1, 1.0, 
+            DEFAULT_CONFIDENCE_THRESHOLD, 
+            0.05,
+            key="settings_confidence"
+        )
+        chunk_duration = st.slider(
+            "Chunk Duration (seconds)", 
+            0.1, 2.0, 
+            DEFAULT_CHUNK_DURATION, 
+            0.1,
+            key="settings_chunk"
+        )
+        
+        # Algorithm selection
+        st.write("**Pitch Detection Algorithm**")
+        algorithm_mode = st.selectbox(
+            "Algorithm Mode",
+            ALGORITHM_MODES,
+            index=0,
+            key="settings_algorithm"
+        )
+        
+        # Audio settings info
+        st.write("**Audio Settings**")
+        st.write(f"Sample Rate: {SAMPLE_RATE} Hz")
+        st.write(f"Channels: {CHANNELS}")
+        st.write(f"Hop Size: {HOP_SIZE}")
+        st.write(f"Buffer Size: {BUFFER_SIZE}")
+        
+        # Close button
+        if st.button("✕ Close", key="close_settings"):
+            st.session_state.show_settings = False
+            st.rerun()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

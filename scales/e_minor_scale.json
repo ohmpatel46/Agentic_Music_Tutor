@@ -1,0 +1,14 @@
+{
+    "scale_name": "E Minor Scale",
+    "notes": ["E3", "F#3", "G3", "A3", "B3", "C4", "D4", "E4"],
+    "octave": 3,
+    "tempo_range": {
+        "min_bpm": 30,
+        "max_bpm": 120,
+        "default_bpm": 60
+    },
+    "note_duration": 1.0,
+    "description": "E Minor scale starting from E3, includes F# (sharp)",
+    "difficulty": "beginner",
+    "category": "minor"
+}

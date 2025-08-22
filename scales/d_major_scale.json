@@ -1,0 +1,14 @@
+{
+    "scale_name": "D Major Scale",
+    "notes": ["D3", "E3", "F#3", "G3", "A3", "B3", "C#4", "D4"],
+    "octave": 3,
+    "tempo_range": {
+        "min_bpm": 30,
+        "max_bpm": 120,
+        "default_bpm": 60
+    },
+    "note_duration": 1.0,
+    "description": "D Major scale starting from D3, includes F# and C# (sharps)",
+    "difficulty": "beginner",
+    "category": "major"
+}
