@@ -4,8 +4,8 @@ import streamlit as st
 import time
 from typing import List
 
-# Import our modular components
-from config import (
+# Import our modular components from the new package structure
+from src.data.config import (
     SAMPLE_RATE, CHANNELS, HOP_SIZE, BUFFER_SIZE,
     DEFAULT_CONFIDENCE_THRESHOLD, DEFAULT_CHUNK_DURATION,
     DEFAULT_ALGORITHM_MODE, ALGORITHM_MODES,
@@ -13,12 +13,12 @@ from config import (
     DEFAULT_TEMPO_BPM, TEMPO_MIN_BPM, TEMPO_MAX_BPM,
     NOTE_TIMING_TOLERANCE
 )
-from utils import load_ground_truth, calculate_accuracy
-from note_detector import detect_note_from_frame
-from audio_processor import record_audio_chunk, get_audio_stats
-from visualizations import create_waveform_plot, create_note_display_plot
-from styles import MAIN_STYLES, get_note_display_html
-from scale_trainer import ScaleTrainer
+from src.utils.utils import load_ground_truth, calculate_accuracy
+from src.core.note_detector import detect_note_from_frame
+from src.core.audio_processor import record_audio_chunk, get_audio_stats
+from src.utils.visualizations import create_waveform_plot, create_note_display_plot
+from src.ui.styles import MAIN_STYLES, get_note_display_html
+from src.core.scale_trainer import ScaleTrainer
 
 # Import required libraries with error handling
 try:

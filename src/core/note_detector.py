@@ -1,11 +1,11 @@
-"""Note detection module using aubio pitch detection algorithms and CREPE."""
+"""Note detection module using multiple algorithms."""
 
 import numpy as np
 import aubio
 import crepe
 from typing import Optional, Tuple
-from config import BUFFER_SIZE, HOP_SIZE, SAMPLE_RATE
-from utils import hz_to_midi, midi_to_note_name
+from src.data.config import BUFFER_SIZE, HOP_SIZE, SAMPLE_RATE
+from src.utils.utils import hz_to_midi, midi_to_note_name
 
 
 def detect_note_with_crepe(audio_frame: np.ndarray, confidence_threshold: float = 0.3) -> Optional[Tuple[str, str, float]]:

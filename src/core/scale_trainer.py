@@ -4,7 +4,7 @@ import json
 import time
 import os
 from typing import Dict, List, Tuple, Optional
-from config import SCALE_TRAINING_PATH, NOTE_TIMING_TOLERANCE
+from src.data.config import SCALE_TRAINING_PATH, NOTE_TIMING_TOLERANCE
 
 
 class ScaleTrainer:
@@ -41,7 +41,7 @@ class ScaleTrainer:
     def get_available_scales(self) -> List[Dict]:
         """Get all available scales from the scales folder."""
         scales = []
-        scales_dir = "scales"
+        scales_dir = "src/data/scales"
         
         if os.path.exists(scales_dir):
             for filename in os.listdir(scales_dir):
@@ -64,7 +64,7 @@ class ScaleTrainer:
     
     def load_scale_by_name(self, scale_name: str) -> bool:
         """Load a specific scale by name."""
-        scales_dir = "scales"
+        scales_dir = "src/data/scales"
         
         if os.path.exists(scales_dir):
             for filename in os.listdir(scales_dir):

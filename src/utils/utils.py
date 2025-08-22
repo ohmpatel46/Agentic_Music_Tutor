@@ -4,7 +4,7 @@ import json
 import numpy as np
 from typing import List, Optional, Tuple
 import streamlit as st
-from config import NOTE_NAMES_SHARP, GROUND_TRUTH_PATH
+from src.data.config import NOTE_NAMES_SHARP, GROUND_TRUTH_PATH
 
 
 def load_ground_truth(ground_truth_path: str = GROUND_TRUTH_PATH) -> Tuple[str, List[str]]:

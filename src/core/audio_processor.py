@@ -1,9 +1,9 @@
-"""Audio processing module for recording and managing audio chunks."""
+"""Audio processing utilities for the Agentic Music Tutor."""
 
 import numpy as np
 import sounddevice as sd
+from src.data.config import SAMPLE_RATE, CHANNELS
 from typing import Optional
-from config import SAMPLE_RATE, CHANNELS
 
 
 def record_audio_chunk(duration: float = 0.5) -> Optional[np.ndarray]:
