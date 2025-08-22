@@ -5,6 +5,7 @@ import time
 import os
 from typing import Dict, List, Tuple, Optional
 from src.data.config import SCALE_TRAINING_PATH, NOTE_TIMING_TOLERANCE
+import numpy as np
 
 
 class ScaleTrainer:
@@ -24,6 +25,13 @@ class ScaleTrainer:
         self.start_time = None
         self.is_training = False
         self.expected_timings = []
+        
+        # New fields for enhanced analysis
+        self.confidence_scores = []      # Track confidence for each note
+        self.waveform_metrics = []       # Track audio quality metrics
+        self.algorithm_used = []         # Which algorithm detected each note
+        self.audio_chunks = []           # Store audio data for each note
+        
         self.calculate_expected_timings()
     
     def load_scale_data(self) -> Dict:
@@ -115,7 +123,9 @@ class ScaleTrainer:
         self.is_training = False
         self.start_time = None
     
-    def check_note_timing(self, detected_note: str) -> Tuple[bool, float, float]:
+    def check_note_timing(self, detected_note: str, confidence: float = None, 
+                          waveform_data: dict = None, algorithm: str = None,
+                          audio_chunk: np.ndarray = None) -> Tuple[bool, float, float]:
         """Check if a detected note matches the expected note and timing."""
         if not self.is_training:
             return False, 0.0, 0.0
@@ -129,6 +139,27 @@ class ScaleTrainer:
             # Set start time when first note is detected
             if self.start_time is None:
                 self.start_time = current_time
+            
+            # Store additional metrics
+            if confidence is not None:
+                self.confidence_scores.append(confidence)
+            else:
+                self.confidence_scores.append(0.0)
+                
+            if waveform_data is not None:
+                self.waveform_metrics.append(waveform_data)
+            else:
+                self.waveform_metrics.append({})
+                
+            if algorithm is not None:
+                self.algorithm_used.append(algorithm)
+            else:
+                self.algorithm_used.append("unknown")
+                
+            if audio_chunk is not None:
+                self.audio_chunks.append(audio_chunk.copy())
+            else:
+                self.audio_chunks.append(None)
             
             # Calculate delay instantly when note is detected
             if self.current_note_index > 0:  # Not the first note
@@ -183,6 +214,19 @@ class ScaleTrainer:
             if absolute_delays:
                 avg_delay = sum(absolute_delays) / len(absolute_delays)
         
+        # Calculate timing consistency score
+        timing_consistency = 0.0
+        if len(self.note_delays) > 1:
+            # Lower standard deviation = more consistent timing
+            delays_without_first = self.note_delays[1:]
+            if delays_without_first:
+                timing_consistency = 1.0 / (1.0 + np.std(delays_without_first))
+        
+        # Calculate average confidence
+        avg_confidence = 0.0
+        if self.confidence_scores:
+            avg_confidence = sum(self.confidence_scores) / len(self.confidence_scores)
+        
         return {
             "status": "training",
             "scale_name": self.scale_data["scale_name"],
@@ -192,6 +236,8 @@ class ScaleTrainer:
             "completed_notes": completed_notes,
             "progress_percentage": (completed_notes / total_notes) * 100,
             "average_delay": avg_delay,
+            "timing_consistency": timing_consistency,
+            "average_confidence": avg_confidence,
             "next_expected_note": self.scale_data["notes"][self.current_note_index] if self.current_note_index < total_notes else None,
             "next_expected_time": self.expected_timings[self.current_note_index] if self.current_note_index < total_notes else None
         }
@@ -209,3 +255,67 @@ class ScaleTrainer:
             "notes": self.scale_data["notes"],
             "tempo_range": self.scale_data["tempo_range"]
         }
+
+    def get_comprehensive_analysis_data(self) -> Dict:
+        """Get comprehensive data for LLM analysis after training session."""
+        if not self.is_training and len(self.actual_timings) == 0:
+            return {}
+        
+        # Calculate detailed statistics
+        total_notes = len(self.actual_timings)
+        
+        # Timing analysis
+        timing_stats = {
+            "total_notes": total_notes,
+            "note_delays": self.note_delays,
+            "average_delay": sum(abs(d) for d in self.note_delays[1:]) / max(len(self.note_delays) - 1, 1) if len(self.note_delays) > 1 else 0.0,
+            "max_delay": max(self.note_delays[1:]) if len(self.note_delays) > 1 else 0.0,
+            "min_delay": min(self.note_delays[1:]) if len(self.note_delays) - 1 > 0 else 0.0,
+            "timing_consistency": 1.0 / (1.0 + np.std(self.note_delays[1:])) if len(self.note_delays) > 1 else 0.0
+        }
+        
+        # Audio quality analysis
+        audio_stats = {
+            "confidence_scores": self.confidence_scores,
+            "average_confidence": sum(self.confidence_scores) / len(self.confidence_scores) if self.confidence_scores else 0.0,
+            "min_confidence": min(self.confidence_scores) if self.confidence_scores else 0.0,
+            "max_confidence": max(self.confidence_scores) if self.confidence_scores else 0.0,
+            "algorithm_performance": self.algorithm_used,
+            "waveform_metrics": self.waveform_metrics
+        }
+        
+        # Performance summary
+        performance_summary = {
+            "scale_name": self.scale_data["scale_name"],
+            "tempo_bpm": self.tempo_bpm,
+            "session_duration": self.actual_timings[-1] if self.actual_timings else 0.0,
+            "notes_completed": total_notes,
+            "overall_rating": self._calculate_overall_rating(timing_stats, audio_stats)
+        }
+        
+        return {
+            "performance_summary": performance_summary,
+            "timing_analysis": timing_stats,
+            "audio_quality": audio_stats,
+            "raw_data": {
+                "actual_timings": self.actual_timings,
+                "note_timestamps": self.note_timestamps
+            }
+        }
+    
+    def _calculate_overall_rating(self, timing_stats: dict, audio_stats: dict) -> str:
+        """Calculate an overall performance rating."""
+        timing_score = timing_stats["timing_consistency"]
+        confidence_score = audio_stats["average_confidence"]
+        
+        # Combine scores (timing is 60%, confidence is 40%)
+        overall_score = (timing_score * 0.6) + (confidence_score * 0.4)
+        
+        if overall_score >= 0.8:
+            return "Excellent"
+        elif overall_score >= 0.6:
+            return "Good"
+        elif overall_score >= 0.4:
+            return "Fair"
+        else:
+            return "Needs Improvement"

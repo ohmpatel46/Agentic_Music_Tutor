@@ -15,10 +15,11 @@ from src.data.config import (
 )
 from src.utils.utils import load_ground_truth, calculate_accuracy
 from src.core.note_detector import detect_note_from_frame
-from src.core.audio_processor import record_audio_chunk, get_audio_stats
+from src.core.audio_processor import record_audio_chunk, get_audio_stats, analyze_waveform_quality
 from src.utils.visualizations import create_waveform_plot, create_note_display_plot
 from src.ui.styles import MAIN_STYLES, get_note_display_html
 from src.core.scale_trainer import ScaleTrainer
+from src.core.llm_analyzer import create_llm_analyzer
 
 # Import required libraries with error handling
 try:
@@ -48,6 +49,10 @@ def initialize_session_state():
         st.session_state.last_note_time = 0
     if 'scale_trainer' not in st.session_state:
         st.session_state.scale_trainer = ScaleTrainer()
+    if 'llm_analyzer' not in st.session_state:
+        st.session_state.llm_analyzer = create_llm_analyzer()
+    if 'llm_analysis' not in st.session_state:
+        st.session_state.llm_analysis = None
 
 
 def render_recording_controls():
@@ -263,8 +268,15 @@ def process_audio_chunk(chunk_duration: float, confidence_threshold: float, algo
                         st.session_state.last_note_time = current_time
                         st.success(f"🎵 Correct note detected: {detected_note} (via {algorithm_used}, conf: {confidence_score:.3f})")
                         
-                        # Update scale trainer
-                        timing_result = st.session_state.scale_trainer.check_note_timing(detected_note)
+                        # Update scale trainer with enhanced data
+                        waveform_data = analyze_waveform_quality(audio_chunk)
+                        timing_result = st.session_state.scale_trainer.check_note_timing(
+                            detected_note, 
+                            confidence_score, 
+                            waveform_data, 
+                            algorithm_used, 
+                            audio_chunk
+                        )
                         if timing_result[0]:  # Note was processed
                             timing_error, expected_time = timing_result[1], timing_result[2]
                             if timing_error > NOTE_TIMING_TOLERANCE:
@@ -487,7 +499,9 @@ def render_scale_training_mode():
             st.rerun()
         
         if st.button("⏹️ Stop Training", use_container_width=True):
-            st.session_state.recording = False  # Only stop recording, preserve training state
+            st.session_state.recording = False  # Stop recording
+            st.session_state.scale_trainer.stop_training()  # Actually stop training
+            st.session_state.llm_analysis = None  # Clear previous analysis
             st.rerun()
         
         if st.button("🔄 Restart Training", use_container_width=True):
@@ -497,13 +511,19 @@ def render_scale_training_mode():
             st.session_state.detected_notes = []
             st.session_state.start_time = None
             st.session_state.last_note_time = 0
+            st.session_state.llm_analysis = None  # Clear previous analysis
             st.rerun()
+        
+
     
     # Scale training progress
     # render_scale_training_progress()  # Removed - replaced with new visual system
     
     # Visual scale progress with time-based positioning
     render_scale_visualization()
+    
+    # LLM Analysis Section
+    render_llm_analysis_section()
     
     # Recording status (only show when training)
     if st.session_state.scale_trainer.is_training:
@@ -518,6 +538,115 @@ def render_scale_training_mode():
                 DEFAULT_CONFIDENCE_THRESHOLD, 
                 DEFAULT_ALGORITHM_MODE
             )
+            st.rerun()
+
+
+def render_llm_analysis_section():
+    """Render the LLM analysis section with AI-powered insights."""
+    st.markdown("---")
+    st.subheader("🤖 AI Performance Analysis")
+    
+    # Check if we have a completed training session
+    if len(st.session_state.scale_trainer.actual_timings) == 0:
+        st.info("Complete a training session to get AI-powered analysis!")
+        return
+    
+    # Check if LLM analyzer is available
+    if not st.session_state.llm_analyzer:
+        st.warning("⚠️ LLM analysis not available. Please ensure Ollama is running.")
+        return
+    
+    # Get comprehensive analysis data
+    analysis_data = st.session_state.scale_trainer.get_comprehensive_analysis_data()
+    
+    if not analysis_data:
+        st.info("No performance data available for analysis.")
+        return
+    
+    # Display performance summary
+    perf_summary = analysis_data["performance_summary"]
+    timing_stats = analysis_data["timing_analysis"]
+    audio_stats = analysis_data["audio_quality"]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Overall Rating", perf_summary["overall_rating"])
+    with col2:
+        st.metric("Timing Consistency", f"{timing_stats['timing_consistency']:.2f}")
+    with col3:
+        st.metric("Avg Confidence", f"{audio_stats['average_confidence']:.2f}")
+    with col4:
+        st.metric("Session Duration", f"{perf_summary['session_duration']:.1f}s")
+    
+    # LLM Analysis Button
+    if st.session_state.scale_trainer.is_training:
+        st.info("⏸️ Complete your training session to get AI analysis")
+    else:
+        if st.button("🧠 Get AI Analysis", type="primary", use_container_width=True):
+            with st.spinner("🤖 Analyzing your performance..."):
+                # Get LLM analysis
+                llm_analysis = st.session_state.llm_analyzer.analyze_performance(analysis_data)
+                if llm_analysis:
+                    st.session_state.llm_analysis = llm_analysis
+                    st.rerun()
+                else:
+                    st.error("Failed to get AI analysis. Please check Ollama connection.")
+    
+    # Display LLM analysis if available
+    if st.session_state.llm_analysis:
+        st.markdown("### 📊 AI Performance Insights")
+        st.markdown("---")
+        
+        # Parse and display the analysis in structured sections
+        analysis_text = st.session_state.llm_analysis
+        
+        # Try to parse the sections
+        if "1. TIMING FEEDBACK:" in analysis_text and "2. AUDIO QUALITY FEEDBACK:" in analysis_text and "3. PRACTICE TIPS + ENCOURAGEMENT:" in analysis_text:
+            # Split into sections
+            sections = analysis_text.split("1. TIMING FEEDBACK:")
+            if len(sections) > 1:
+                timing_section = sections[1].split("2. AUDIO QUALITY FEEDBACK:")[0].strip()
+                audio_section = sections[1].split("2. AUDIO QUALITY FEEDBACK:")[1].split("3. PRACTICE TIPS + ENCOURAGEMENT:")[0].strip()
+                practice_section = sections[1].split("3. PRACTICE TIPS + ENCOURAGEMENT:")[1].strip()
+                
+                # Display in structured format - truly side-by-side with compact cards
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown("**⏱️ Timing Feedback**")
+                    # Create a compact card-like display
+                    timing_clean = timing_section.replace("1. TIMING FEEDBACK:", "").strip()
+                    st.markdown(f"""
+                    <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;">
+                    {timing_clean}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown("**🎵 Audio Quality Feedback**")
+                    audio_clean = audio_section.replace("2. AUDIO QUALITY FEEDBACK:", "").strip()
+                    st.markdown(f"""
+                    <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;">
+                    {audio_clean}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    st.markdown("**💡 Practice Tips + Encouragement**")
+                    practice_clean = practice_section.replace("3. PRACTICE TIPS + ENCOURAGEMENT:", "").strip()
+                    st.markdown(f"""
+                    <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;">
+                    {practice_clean}
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Fallback to original display if parsing fails
+            st.markdown(analysis_text)
+        
+        # Add a button to regenerate analysis
+        if st.button("🔄 Regenerate Analysis", use_container_width=False):
+            st.session_state.llm_analysis = None
             st.rerun()
 
 
