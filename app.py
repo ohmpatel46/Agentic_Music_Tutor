@@ -21,6 +21,11 @@ from src.ui.styles import MAIN_STYLES, get_note_display_html
 from src.core.scale_trainer import ScaleTrainer
 from src.core.llm_analyzer import create_llm_analyzer
 
+# Import new agentic components
+from src.core.music_agent import create_music_agent
+from src.core.conversation_manager import create_conversation_manager
+from src.core.practice_orchestrator import create_practice_orchestrator
+
 # Import required libraries with error handling
 try:
     import sounddevice as sd
@@ -53,6 +58,31 @@ def initialize_session_state():
         st.session_state.llm_analyzer = create_llm_analyzer()
     if 'llm_analysis' not in st.session_state:
         st.session_state.llm_analysis = None
+    
+    # Initialize agentic components
+    if 'music_agent' not in st.session_state:
+        st.session_state.music_agent = create_music_agent()
+    if 'conversation_manager' not in st.session_state:
+        st.session_state.conversation_manager = create_conversation_manager(st.session_state.music_agent) if st.session_state.music_agent else None
+    if 'practice_orchestrator' not in st.session_state:
+        st.session_state.practice_orchestrator = create_practice_orchestrator(
+            st.session_state.music_agent, 
+            st.session_state.conversation_manager
+        ) if st.session_state.music_agent and st.session_state.conversation_manager else None
+    
+    # Agentic mode state
+    if 'agentic_mode' not in st.session_state:
+        st.session_state.agentic_mode = False
+    if 'current_conversation_id' not in st.session_state:
+        st.session_state.current_conversation_id = None
+    if 'conversation_history' not in st.session_state:
+        st.session_state.conversation_history = []
+    
+    # AI tutor UI state
+    if 'selected_scale' not in st.session_state:
+        st.session_state.selected_scale = "C Major Scale"
+    if 'selected_tempo' not in st.session_state:
+        st.session_state.selected_tempo = 80
 
 
 def render_recording_controls():
@@ -329,6 +359,8 @@ def main():
         render_note_detection_mode()
     elif st.session_state.app_mode == 'scale_training':
         render_scale_training_mode()
+    elif st.session_state.app_mode == 'ai_tutor':
+        render_ai_tutor_mode()
     
     # Settings button at the bottom of the page
     render_bottom_settings()
@@ -350,7 +382,7 @@ def render_landing_page():
     """, unsafe_allow_html=True)
     
     # Pathway Cards and Buttons
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         # Free Play Card
@@ -387,6 +419,25 @@ def render_landing_page():
         # Button with same width as card
         if st.button("🎼 Start Scale Training", key="scale_training_btn", use_container_width=False):
             st.session_state.app_mode = 'scale_training'
+            st.rerun()
+    
+    with col3:
+        # Agentic AI Tutor Card
+        st.markdown("""
+        <div style="background: white; border: 2px solid #e0e0e0; border-radius: 15px; 
+                    padding: 2rem; margin: 1rem 0; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center;">
+            <h3 style="color: #9c27b0; margin-bottom: 1rem; font-size: 1.4rem;">🤖 AI Agentic Tutor</h3>
+            <p style="color: #555; line-height: 1.5; margin-bottom: 1.5rem;">
+                Experience autonomous music tutoring with AI that adapts to your skill level,
+                sets personalized goals, and guides your entire learning journey.
+                Natural language interaction and intelligent practice planning.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Button with same width as card
+        if st.button("🤖 Start AI Tutor", key="ai_tutor_btn", use_container_width=False):
+            st.session_state.app_mode = 'ai_tutor'
             st.rerun()
 
 
@@ -648,6 +699,245 @@ def render_llm_analysis_section():
         if st.button("🔄 Regenerate Analysis", use_container_width=False):
             st.session_state.llm_analysis = None
             st.rerun()
+
+
+def render_ai_tutor_mode():
+    """Render the AI agentic tutor mode with integrated scale training."""
+    st.header("🤖 AI Agentic Music Tutor")
+    
+    # Back button
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col1:
+        if st.button("← Back to Landing", key="back_ai_tutor"):
+            st.session_state.app_mode = None
+            st.rerun()
+    
+    # Check if agentic components are available
+    if not st.session_state.music_agent or not st.session_state.conversation_manager:
+        st.error("❌ AI Tutor components not available. Please ensure Ollama is running.")
+        st.info("💡 Make sure you have Ollama installed and running with the llama3.2:3b model.")
+        return
+    
+    # Main content - AI Tutor on the right, Scale Training on the left
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.subheader("🎼 AI-Guided Scale Training")
+        
+        # Scale training settings
+        st.subheader("⚙️ Training Settings")
+        
+        # Scale selector dropdown
+        available_scales = st.session_state.scale_trainer.get_available_scales()
+        scale_names = [scale['name'] for scale in available_scales]
+        
+        if scale_names:
+            # Initialize selected scale from session state or current scale
+            if 'selected_scale' not in st.session_state:
+                st.session_state.selected_scale = scale_names[0]
+            
+            selected_scale = st.selectbox(
+                "Select Scale:",
+                scale_names,
+                index=scale_names.index(st.session_state.selected_scale) if st.session_state.selected_scale in scale_names else 0,
+                key="ai_scale_selector"
+            )
+            
+            # Update session state when user changes selection
+            if selected_scale != st.session_state.selected_scale:
+                st.session_state.selected_scale = selected_scale
+            
+            # Load selected scale if different from current
+            current_scale = st.session_state.scale_trainer.scale_data.get('scale_name', '')
+            if selected_scale != current_scale:
+                if st.session_state.scale_trainer.load_scale_by_name(selected_scale):
+                    st.success(f"Loaded {selected_scale}")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to load {selected_scale}")
+        
+        # Scale info and controls
+        col1a, col2a, col3a = st.columns(3)
+        
+        with col1a:
+            scale_info = st.session_state.scale_trainer.get_scale_info()
+            st.write(f"**Scale**: {scale_info['name']}")
+            st.write(f"**Notes**: {' → '.join(scale_info['notes'])}")
+        
+        with col2a:
+            # Tempo control
+            # Initialize selected tempo from session state or current tempo
+            if 'selected_tempo' not in st.session_state:
+                st.session_state.selected_tempo = st.session_state.scale_trainer.tempo_bpm
+            
+            tempo_bpm = st.slider(
+                "Tempo (BPM)",
+                TEMPO_MIN_BPM, TEMPO_MAX_BPM,
+                st.session_state.selected_tempo,
+                5,
+                key="ai_tempo_slider"
+            )
+            
+            # Update session state when user changes tempo
+            if tempo_bpm != st.session_state.selected_tempo:
+                st.session_state.selected_tempo = tempo_bpm
+            
+            # Update tempo when changed
+            if tempo_bpm != st.session_state.scale_trainer.tempo_bpm:
+                st.session_state.scale_trainer.set_tempo(tempo_bpm)
+        
+        with col3a:
+            # Training controls
+            scale_name = st.session_state.scale_trainer.scale_data.get('scale_name', 'Scale')
+            if st.button(f"▶️ Start {scale_name} Training", use_container_width=True, type="primary", key="ai_start_training"):
+                st.session_state.scale_trainer.start_training()
+                st.session_state.recording = True
+                st.rerun()
+            
+            if st.button("⏹️ Stop Training", use_container_width=True, key="ai_stop_training"):
+                st.session_state.recording = False
+                st.session_state.scale_trainer.stop_training()
+                st.rerun()
+            
+            if st.button("🔄 Restart Training", use_container_width=True, key="ai_restart_training"):
+                st.session_state.scale_trainer.stop_training()
+                st.session_state.recording = False
+                st.session_state.audio_data = []
+                st.session_state.detected_notes = []
+                st.session_state.start_time = None
+                st.session_state.last_note_time = 0
+                st.rerun()
+        
+        # Visual scale progress
+        render_scale_visualization()
+        
+        # Recording status and note detection (only show when training)
+        if st.session_state.scale_trainer.is_training:
+            st.subheader("🎙️ Training Session")
+            render_recording_status()
+            render_detected_notes()
+            
+            # Real-time audio capture and note detection
+            if st.session_state.recording:
+                process_audio_chunk(
+                    DEFAULT_CHUNK_DURATION, 
+                    DEFAULT_CONFIDENCE_THRESHOLD, 
+                    DEFAULT_ALGORITHM_MODE
+                )
+                st.rerun()
+    
+    with col2:
+        st.subheader("🤖 AI Tutor Assistant")
+        
+        # Student profile display
+        if st.session_state.music_agent:
+            profile = st.session_state.music_agent.student_profile
+            st.info(f"""
+            **Student Profile:**
+            - **Level:** {profile.level.value.title()}
+            - **Instrument:** {profile.preferred_instrument.title()}
+            - **Practice Time:** {profile.practice_time_per_day} minutes/day
+            - **Completed Scales:** {len(profile.completed_scales)}
+            - **Current Goals:** {len(profile.current_goals)}
+            """)
+        
+        # Practice session status
+        st.subheader("🎯 Session Status")
+        
+        if st.session_state.practice_orchestrator and st.session_state.practice_orchestrator.has_active_session():
+            # Active session
+            session = st.session_state.practice_orchestrator.current_session
+            st.success(f"**Active:** {session.current_scale}")
+            st.info(f"**Phase:** {session.current_phase.value.replace('_', ' ').title()}")
+            st.write(f"**Focus:** {', '.join([area.value for area in session.focus_areas])}")
+            
+            # Session guidance
+            st.markdown("**🤖 AI Guidance:**")
+            st.write(session.agent_guidance[-1] if session.agent_guidance else "No guidance available")
+            
+            # AI Performance Analysis (moved here from main UI)
+            if st.session_state.scale_trainer.actual_timings and len(st.session_state.scale_trainer.actual_timings) > 0:
+                st.subheader("📊 AI Performance Analysis")
+                
+                # Get LLM analysis
+                if st.session_state.llm_analyzer:
+                    try:
+                        # Prepare performance data for analysis
+                        performance_data = {
+                            "scale_name": st.session_state.scale_trainer.scale_data.get("scale_name", "Unknown"),
+                            "tempo_bpm": st.session_state.scale_trainer.tempo_bpm,
+                            "actual_timings": st.session_state.scale_trainer.actual_timings,
+                            "expected_timings": st.session_state.scale_trainer.expected_timings,
+                            "detected_notes": st.session_state.detected_notes[-10:] if st.session_state.detected_notes else []
+                        }
+                        
+                        # Get AI analysis
+                        analysis = st.session_state.llm_analyzer.analyze_performance(performance_data)
+                        st.markdown(analysis)
+                        
+                    except Exception as e:
+                        st.error(f"Error getting AI analysis: {str(e)}")
+                else:
+                    st.info("AI analyzer not available for performance insights.")
+            
+            # Session controls
+            if st.button("⏹️ End Session", key="ai_end_session", use_container_width=True):
+                summary = st.session_state.practice_orchestrator.end_session()
+                st.session_state.recording = False
+                if "error" not in summary:
+                    st.success("Session ended!")
+                else:
+                    st.warning(summary["error"])
+                st.rerun()
+            
+            if st.button("🔄 Restart Session", key="ai_restart_session", use_container_width=True):
+                st.session_state.practice_orchestrator.end_session()
+                st.rerun()
+        else:
+            # Start new session
+            st.info("Ready to start a new practice session!")
+            
+            student_input = st.text_area(
+                "What would you like to work on?",
+                placeholder="e.g., I want to practice C Major scale at 80 BPM, I want to improve my timing on G Major scale, etc.",
+                height=80,
+                key="ai_student_input"
+            )
+            
+            if st.button("🚀 Start AI Session", key="ai_start_session", type="primary", use_container_width=True):
+                if st.session_state.practice_orchestrator:
+                    # Start the AI-guided session
+                    session = st.session_state.practice_orchestrator.start_autonomous_session(student_input)
+                    if session:
+                        # Auto-update the scale and tempo based on AI session
+                        if session.current_scale:
+                            # Find and select the scale in the dropdown
+                            available_scales = st.session_state.scale_trainer.get_available_scales()
+                            scale_names = [scale['name'] for scale in available_scales]
+                            if session.current_scale in scale_names:
+                                # Update the scale trainer and session state
+                                st.session_state.scale_trainer.load_scale_by_name(session.current_scale)
+                                # Store the selected scale for the dropdown
+                                st.session_state.selected_scale = session.current_scale
+                                st.success(f"🎯 AI selected scale: {session.current_scale}")
+                        
+                        # Update tempo
+                        if session.tempo_bpm:
+                            st.session_state.scale_trainer.set_tempo(session.tempo_bpm)
+                            # Store the tempo for the slider
+                            st.session_state.selected_tempo = session.tempo_bpm
+                            st.success(f"🎵 AI set tempo: {session.tempo_bpm} BPM")
+                        
+                        # Auto-start recording
+                        st.session_state.recording = True
+                        st.session_state.scale_trainer.start_training()
+                        
+                        st.success(f"🚀 Started {session.current_scale} practice at {session.tempo_bpm} BPM!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to start session. Please try again.")
+                else:
+                    st.error("Practice orchestrator not available.")
 
 
 def render_bottom_settings():
