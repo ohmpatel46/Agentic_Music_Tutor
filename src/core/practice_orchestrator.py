@@ -452,6 +452,56 @@ class PracticeOrchestrator:
             self.current_session = None
             return {"error": f"Error ending session: {str(e)}"}
     
+    def _generate_next_exercise_suggestion(self) -> Dict[str, Any]:
+        """Generate a suggestion for the next exercise with Yes/No question."""
+        try:
+            # Get current progress
+            current_scale = self.scale_trainer.scale_data.get("scale_name", "C Major Scale")
+            current_tempo = self.scale_trainer.tempo_bpm
+            
+            # Determine next scale based on progression
+            next_scale = None
+            next_tempo = current_tempo
+            
+            # Simple progression logic
+            scale_progression = {
+                "C Major Scale": "G Major Scale",
+                "G Major Scale": "D Major Scale", 
+                "D Major Scale": "A Minor Scale",
+                "A Minor Scale": "E Minor Scale",
+                "E Minor Scale": "C Major Scale"  # Loop back
+            }
+            
+            if current_scale in scale_progression:
+                next_scale = scale_progression[current_scale]
+            
+            # Adjust tempo based on progress
+            if current_tempo < 100:
+                next_tempo = min(current_tempo + 10, 120)  # Increase by 10 BPM
+            else:
+                next_tempo = 80  # Reset to moderate tempo for new scale
+            
+            # Create suggestion message
+            suggestion_message = f"Great work on {current_scale}! Now you should move onto the {next_scale} at {next_tempo} BPM. Let us begin?"
+            
+            return {
+                "message": suggestion_message,
+                "scale": next_scale,
+                "tempo": next_tempo,
+                "current_scale": current_scale,
+                "current_tempo": current_tempo
+            }
+            
+        except Exception as e:
+            # Fallback suggestion
+            return {
+                "message": "Excellent practice session! Would you like to try a different scale or increase the tempo?",
+                "scale": "C Major Scale",
+                "tempo": 80,
+                "current_scale": "Unknown",
+                "current_tempo": 80
+            }
+    
     def _generate_final_assessment(self) -> str:
         """Generate a final assessment of the session."""
         if not self.current_session:

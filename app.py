@@ -83,6 +83,8 @@ def initialize_session_state():
         st.session_state.selected_scale = "C Major Scale"
     if 'selected_tempo' not in st.session_state:
         st.session_state.selected_tempo = 80
+    if 'next_exercise_suggestion' not in st.session_state:
+        st.session_state.next_exercise_suggestion = None
 
 
 def render_recording_controls():
@@ -702,242 +704,480 @@ def render_llm_analysis_section():
 
 
 def render_ai_tutor_mode():
-    """Render the AI agentic tutor mode with integrated scale training."""
-    st.header("🤖 AI Agentic Music Tutor")
+    """Render the AI Tutor mode with integrated scale training."""
     
-    # Back button
-    col1, col2, col3 = st.columns([1, 3, 1])
-    with col1:
-        if st.button("← Back to Landing", key="back_ai_tutor"):
-            st.session_state.app_mode = None
-            st.rerun()
-    
-    # Check if agentic components are available
-    if not st.session_state.music_agent or not st.session_state.conversation_manager:
-        st.error("❌ AI Tutor components not available. Please ensure Ollama is running.")
-        st.info("💡 Make sure you have Ollama installed and running with the llama3.2:3b model.")
-        return
+    # Initialize session state variables
+    if 'selected_scale' not in st.session_state:
+        st.session_state.selected_scale = None
+    if 'selected_tempo' not in st.session_state:
+        st.session_state.selected_tempo = 120
+    if 'next_exercise_suggestion' not in st.session_state:
+        st.session_state.next_exercise_suggestion = None
     
     # Main content - AI Tutor on the right, Scale Training on the left
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([2, 2])
     
     with col1:
         st.subheader("🎼 AI-Guided Scale Training")
         
-        # Scale training settings
-        st.subheader("⚙️ Training Settings")
-        
-        # Scale selector dropdown
-        available_scales = st.session_state.scale_trainer.get_available_scales()
-        scale_names = [scale['name'] for scale in available_scales]
-        
-        if scale_names:
-            # Initialize selected scale from session state or current scale
-            if 'selected_scale' not in st.session_state:
-                st.session_state.selected_scale = scale_names[0]
+        # STATIC CONTAINER - Training Settings (won't re-render during recording)
+        with st.container():
+            st.subheader("⚙️ Training Settings")
             
-            selected_scale = st.selectbox(
-                "Select Scale:",
-                scale_names,
-                index=scale_names.index(st.session_state.selected_scale) if st.session_state.selected_scale in scale_names else 0,
-                key="ai_scale_selector"
-            )
+            # Scale selector dropdown
+            available_scales = st.session_state.scale_trainer.get_available_scales()
+            scale_names = [scale['name'] for scale in available_scales]
             
-            # Update session state when user changes selection
-            if selected_scale != st.session_state.selected_scale:
-                st.session_state.selected_scale = selected_scale
+            if scale_names:
+                # Initialize selected scale from session state or current scale, default to A minor
+                if 'selected_scale' not in st.session_state:
+                    # Find A minor in available scales, fallback to first scale if not found
+                    a_minor_index = next((i for i, scale in enumerate(scale_names) if 'A minor' in scale), 0)
+                    st.session_state.selected_scale = scale_names[a_minor_index]
+                
+                selected_scale = st.selectbox(
+                    "Select Scale:",
+                    scale_names,
+                    index=scale_names.index(st.session_state.selected_scale) if st.session_state.selected_scale in scale_names else 0,
+                    key="ai_scale_selector"
+                )
+                
+                # Update session state when user changes selection
+                if selected_scale != st.session_state.selected_scale:
+                    st.session_state.selected_scale = selected_scale
+                
+                # Load selected scale if different from current
+                current_scale = st.session_state.scale_trainer.scale_data.get('scale_name', '')
+                if selected_scale != current_scale:
+                    try:
+                        st.session_state.scale_trainer.load_scale_by_name(selected_scale)
+                        st.success(f"✅ Loaded {selected_scale} scale")
+                    except Exception as e:
+                        st.error(f"Error loading scale: {str(e)}")
             
-            # Load selected scale if different from current
-            current_scale = st.session_state.scale_trainer.scale_data.get('scale_name', '')
-            if selected_scale != current_scale:
-                if st.session_state.scale_trainer.load_scale_by_name(selected_scale):
-                    st.success(f"Loaded {selected_scale}")
-                    st.rerun()
-                else:
-                    st.error(f"Failed to load {selected_scale}")
-        
-        # Scale info and controls
-        col1a, col2a, col3a = st.columns(3)
-        
-        with col1a:
-            scale_info = st.session_state.scale_trainer.get_scale_info()
-            st.write(f"**Scale**: {scale_info['name']}")
-            st.write(f"**Notes**: {' → '.join(scale_info['notes'])}")
-        
-        with col2a:
             # Tempo control
-            # Initialize selected tempo from session state or current tempo
-            if 'selected_tempo' not in st.session_state:
-                st.session_state.selected_tempo = st.session_state.scale_trainer.tempo_bpm
+            col1a, col2a = st.columns(2)
+            with col1a:
+                # Scale info display
+                scale_info = st.session_state.scale_trainer.get_scale_info()
+                st.write(f"**Scale**: {scale_info['name']}")
+                st.write(f"**Notes**: {' → '.join(scale_info['notes'])}")
             
-            tempo_bpm = st.slider(
-                "Tempo (BPM)",
-                TEMPO_MIN_BPM, TEMPO_MAX_BPM,
-                st.session_state.selected_tempo,
-                5,
-                key="ai_tempo_slider"
-            )
+            with col2a:
+                # Tempo control
+                # Initialize selected tempo from session state or current tempo
+                if 'selected_tempo' not in st.session_state:
+                    st.session_state.selected_tempo = st.session_state.scale_trainer.tempo_bpm
+                
+                # Ensure we have a valid tempo value
+                if st.session_state.selected_tempo is None:
+                    st.session_state.selected_tempo = 120  # Default fallback
+                
+                selected_tempo = st.slider(
+                    "Tempo (BPM):",
+                    min_value=40,
+                    max_value=200,
+                    value=st.session_state.selected_tempo,
+                    step=5,
+                    key="ai_tempo_slider"
+                )
+                
+                # Update session state and scale trainer when tempo changes
+                if selected_tempo != st.session_state.selected_tempo:
+                    st.session_state.selected_tempo = selected_tempo
+                    st.session_state.scale_trainer.set_tempo(selected_tempo)
+                
+                st.write(f"**Current Tempo**: {selected_tempo} BPM")
             
-            # Update session state when user changes tempo
-            if tempo_bpm != st.session_state.selected_tempo:
-                st.session_state.selected_tempo = tempo_bpm
-            
-            # Update tempo when changed
-            if tempo_bpm != st.session_state.scale_trainer.tempo_bpm:
-                st.session_state.scale_trainer.set_tempo(tempo_bpm)
-        
-        with col3a:
             # Training controls
-            scale_name = st.session_state.scale_trainer.scale_data.get('scale_name', 'Scale')
-            if st.button(f"▶️ Start {scale_name} Training", use_container_width=True, type="primary", key="ai_start_training"):
-                st.session_state.scale_trainer.start_training()
-                st.session_state.recording = True
-                st.rerun()
+            col1b, col2b, col3b = st.columns(3)
+            with col1b:
+                if st.button("▶️ Start Training", use_container_width=True, key="ai_start_training"):
+                    st.session_state.recording = True
+                    st.session_state.scale_trainer.start_training()
+                    st.session_state.start_time = time.time()
+                    st.rerun()
             
-            if st.button("⏹️ Stop Training", use_container_width=True, key="ai_stop_training"):
-                st.session_state.recording = False
-                st.session_state.scale_trainer.stop_training()
-                st.rerun()
+            with col2b:
+                if st.button("⏹️ Stop Training", use_container_width=True, key="ai_stop_training"):
+                    st.session_state.recording = False
+                    st.session_state.scale_trainer.stop_training()
+                    
+                    # Generate session insights using existing LLM analysis and add to chat
+                    if st.session_state.practice_orchestrator and st.session_state.practice_orchestrator.has_active_session():
+                        try:
+                            # End the current session
+                            summary = st.session_state.practice_orchestrator.end_session()
+                            
+                            if "error" not in summary:
+                                # Get LLM analysis using the existing perfect prompt
+                                if st.session_state.llm_analyzer and len(st.session_state.scale_trainer.actual_timings) > 0:
+                                    try:
+                                        # Get comprehensive analysis data (same as the working prompt)
+                                        analysis_data = st.session_state.scale_trainer.get_comprehensive_analysis_data()
+                                        
+                                        if analysis_data:
+                                            # Get LLM analysis using the existing perfect prompt
+                                            llm_analysis = st.session_state.llm_analyzer.analyze_performance(analysis_data)
+                                            
+                                            if llm_analysis:
+                                                # Add LLM analysis to chat
+                                                llm_insight = f"🤖 **AI Performance Analysis:**\n\n{llm_analysis}"
+                                                
+                                                st.session_state.ai_chat_history.append({
+                                                    "role": "assistant",
+                                                    "content": llm_insight,
+                                                    "timestamp": time.time()
+                                                })
+                                            else:
+                                                st.warning("Failed to get AI analysis. Please check Ollama connection.")
+                                        else:
+                                            st.info("No performance data available for analysis.")
+                                    except Exception as e:
+                                        st.error(f"Error getting LLM analysis: {str(e)}")
+                                
+                                # Generate and add next exercise suggestion to chat
+                                next_exercise = st.session_state.practice_orchestrator._generate_next_exercise_suggestion()
+                                if next_exercise:
+                                    # Suggest same scale at increased tempo instead of different scale
+                                    current_scale = st.session_state.selected_scale
+                                    current_tempo = st.session_state.selected_tempo
+                                    suggested_tempo = min(current_tempo + 10, 200)  # Increase by 10 BPM, max 200
+                                    
+                                    suggestion_message = f"🎯 **Next Exercise Suggestion:**\n\nGreat work! Now try the same **{current_scale}** scale at **{suggested_tempo} BPM** (increased from {current_tempo} BPM).\n\n**To start this exercise, just type:** \"Yes, let's practice {current_scale} at {suggested_tempo} BPM\""
+                                    
+                                    st.session_state.ai_chat_history.append({
+                                        "role": "assistant",
+                                        "content": suggestion_message,
+                                        "timestamp": time.time()
+                                    })
+                                    
+                                    # Store the suggestion for easy access
+                                    st.session_state.next_exercise_suggestion = {
+                                        'scale': current_scale,
+                                        'tempo': suggested_tempo,
+                                        'message': f"Try {current_scale} at {suggested_tempo} BPM (increased tempo)"
+                                    }
+                                
+                                st.success("Session ended! Check the chat above for insights and next exercise suggestions.")
+                            else:
+                                st.warning(summary["error"])
+                        except Exception as e:
+                            st.error(f"Error ending session: {str(e)}")
+                    
+                    st.rerun()
             
-            if st.button("🔄 Restart Training", use_container_width=True, key="ai_restart_training"):
-                st.session_state.scale_trainer.stop_training()
-                st.session_state.recording = False
-                st.session_state.audio_data = []
-                st.session_state.detected_notes = []
-                st.session_state.start_time = None
-                st.session_state.last_note_time = 0
-                st.rerun()
+            with col3b:
+                if st.button("🔄 Restart Training", use_container_width=True, key="ai_restart_training"):
+                    st.session_state.scale_trainer.stop_training()
+                    st.session_state.recording = False
+                    st.session_state.audio_data = []
+                    st.session_state.detected_notes = []
+                    st.session_state.start_time = None
+                    st.session_state.last_note_time = 0
+                    
+                    # Clear the AI chat and start fresh
+                    st.session_state.ai_chat_history = []
+                    st.session_state.next_exercise_suggestion = None
+                    
+                    # Add fresh welcome message
+                    st.session_state.ai_chat_history.append({
+                        "role": "assistant",
+                        "content": "🎸 **Welcome to your AI Music Tutor!**\n\nI'm here to guide you through your musical journey. I can:\n• Help you choose scales and tempos\n• Provide practice guidance\n• Analyze your performance\n• Suggest next exercises\n• Answer your questions\n\n**🎯 To start practicing, just type your request in the chat below!**\n\n**Examples:**\n• \"I want to practice C Major scale at 80 BPM\"\n• \"Help me improve my timing on G Major scale\"\n• \"I'm feeling stuck on scales, what should I do?\"\n• \"Start a practice session for beginners\"\n\nJust tell me what you want to work on and I'll set everything up for you! 🚀",
+                        "timestamp": time.time()
+                    })
+                    
+                    st.rerun()
         
-        # Visual scale progress
-        render_scale_visualization()
-        
-        # Recording status and note detection (only show when training)
-        if st.session_state.scale_trainer.is_training:
-            st.subheader("🎙️ Training Session")
-            render_recording_status()
-            render_detected_notes()
+        # DYNAMIC CONTAINER - Real-time updates during recording
+        with st.container():
+            # Create placeholders for dynamic content that updates during recording
+            recording_status = st.empty()
+            scale_visualization = st.empty()
+            detected_notes_display = st.empty()
+            timing_feedback = st.empty()
             
-            # Real-time audio capture and note detection
+            # Update dynamic content based on recording state
             if st.session_state.recording:
+                # Recording status
+                recording_status.success("🎵 **Recording in progress...**")
+                
+                # Scale visualization with real-time updates
+                scale_visualization.markdown(render_scale_visualization())
+                
+                # Detected notes display
+                if st.session_state.detected_notes:
+                    notes_text = "**Detected Notes:** " + " → ".join(st.session_state.detected_notes[-5:])  # Show last 5 notes
+                    detected_notes_display.info(notes_text)
+                else:
+                    detected_notes_display.info("🎵 Waiting for notes...")
+                
+                # Timing feedback
+                if hasattr(st.session_state.scale_trainer, 'actual_timings') and st.session_state.scale_trainer.actual_timings:
+                    last_timing = st.session_state.scale_trainer.actual_timings[-1] if st.session_state.scale_trainer.actual_timings else 0
+                    timing_feedback.metric("Last Note Delay", f"{last_timing:.2f}s")
+                else:
+                    timing_feedback.info("⏱️ Timing analysis will appear here")
+                
+                # Real-time audio capture and note detection (this makes the scale chart update!)
                 process_audio_chunk(
                     DEFAULT_CHUNK_DURATION, 
                     DEFAULT_CONFIDENCE_THRESHOLD, 
                     DEFAULT_ALGORITHM_MODE
                 )
                 st.rerun()
+            else:
+                # Not recording - show minimal content
+                scale_visualization.markdown(render_scale_visualization())
     
     with col2:
         st.subheader("🤖 AI Tutor Assistant")
         
-        # Student profile display
-        if st.session_state.music_agent:
-            profile = st.session_state.music_agent.student_profile
-            st.info(f"""
-            **Student Profile:**
-            - **Level:** {profile.level.value.title()}
-            - **Instrument:** {profile.preferred_instrument.title()}
-            - **Practice Time:** {profile.practice_time_per_day} minutes/day
-            - **Completed Scales:** {len(profile.completed_scales)}
-            - **Current Goals:** {len(profile.current_goals)}
-            """)
+        # STATIC CONTAINER - Student profile (won't re-render)
+        with st.container():
+            # Student profile display
+            if st.session_state.music_agent:
+                profile = st.session_state.music_agent.student_profile
+                st.info(f"""
+                **Student Profile:**
+                - **Level:** {profile.level.value.title()}
+                - **Instrument:** {profile.preferred_instrument.title()}
+                - **Practice Time:** {profile.practice_time_per_day} minutes/day
+                - **Completed Scales:** {len(profile.completed_scales)}
+                - **Current Goals:** {len(profile.current_goals)}
+                """)
         
-        # Practice session status
-        st.subheader("🎯 Session Status")
-        
-        if st.session_state.practice_orchestrator and st.session_state.practice_orchestrator.has_active_session():
-            # Active session
-            session = st.session_state.practice_orchestrator.current_session
-            st.success(f"**Active:** {session.current_scale}")
-            st.info(f"**Phase:** {session.current_phase.value.replace('_', ' ').title()}")
-            st.write(f"**Focus:** {', '.join([area.value for area in session.focus_areas])}")
+        # STATIC CONTAINER - AI Chat Interface (won't re-render structure)
+        with st.container():
+            st.subheader("💬 AI Chat")
             
-            # Session guidance
-            st.markdown("**🤖 AI Guidance:**")
-            st.write(session.agent_guidance[-1] if session.agent_guidance else "No guidance available")
+            # Initialize chat history if not exists
+            if 'ai_chat_history' not in st.session_state:
+                st.session_state.ai_chat_history = []
+                # Add welcome message
+                st.session_state.ai_chat_history.append({
+                    "role": "assistant",
+                    "content": "🎸 **Welcome to your AI Music Tutor!**\n\nI'm here to guide you through your musical journey. I can:\n• Help you choose scales and tempos\n• Provide practice guidance\n• Analyze your performance\n• Suggest next exercises\n• Answer your questions\n\n**🎯 To start practicing, just type your request in the chat below!**\n\n**Examples:**\n• \"I want to practice C Major scale at 80 BPM\"\n• \"Help me improve my timing on G Major scale\"\n• \"I'm feeling stuck on scales, what should I do?\"\n• \"Start a practice session for beginners\"\n\nJust tell me what you want to work on and I'll set everything up for you! 🚀",
+                    "timestamp": time.time()
+                })
             
-            # AI Performance Analysis (moved here from main UI)
-            if st.session_state.scale_trainer.actual_timings and len(st.session_state.scale_trainer.actual_timings) > 0:
-                st.subheader("📊 AI Performance Analysis")
+            # Chat display area with scrollable container
+            chat_container = st.container()
+            with chat_container:
+                # Create a scrollable chat area
+                st.markdown("""
+                <style>
+                .chat-container {
+                    max-height: 300px;
+                    overflow-y: auto;
+                    border: 1px solid #ddd;
+                    border-radius: 10px;
+                    padding: 10px;
+                    background-color: #f8f9fa;
+                }
+                .chat-message {
+                    margin: 10px 0;
+                    padding: 10px;
+                    border-radius: 8px;
+                }
+                .user-message {
+                    background-color: #007bff;
+                    color: white;
+                    margin-left: 20px;
+                }
+                .ai-message {
+                    background-color: #e9ecef;
+                    color: #333;
+                    margin-right: 20px;
+                }
+                </style>
+                """, unsafe_allow_html=True)
                 
-                # Get LLM analysis
-                if st.session_state.llm_analyzer:
-                    try:
-                        # Prepare performance data for analysis
-                        performance_data = {
-                            "scale_name": st.session_state.scale_trainer.scale_data.get("scale_name", "Unknown"),
-                            "tempo_bpm": st.session_state.scale_trainer.tempo_bpm,
-                            "actual_timings": st.session_state.scale_trainer.actual_timings,
-                            "expected_timings": st.session_state.scale_trainer.expected_timings,
-                            "detected_notes": st.session_state.detected_notes[-10:] if st.session_state.detected_notes else []
-                        }
-                        
-                        # Get AI analysis
-                        analysis = st.session_state.llm_analyzer.analyze_performance(performance_data)
-                        st.markdown(analysis)
-                        
-                    except Exception as e:
-                        st.error(f"Error getting AI analysis: {str(e)}")
+                # Display chat history
+                if st.session_state.ai_chat_history:
+                    chat_html = '<div class="chat-container">'
+                    for msg in st.session_state.ai_chat_history:
+                        if msg['role'] == 'user':
+                            chat_html += f'<div class="chat-message user-message"><strong>You:</strong> {msg["content"]}</div>'
+                        else:
+                            chat_html += f'<div class="chat-message ai-message"><strong>AI:</strong> {msg["content"]}</div>'
+                    chat_html += '</div>'
+                    st.markdown(chat_html, unsafe_allow_html=True)
                 else:
-                    st.info("AI analyzer not available for performance insights.")
+                    st.info("Start a conversation with your AI tutor!")
             
-            # Session controls
-            if st.button("⏹️ End Session", key="ai_end_session", use_container_width=True):
-                summary = st.session_state.practice_orchestrator.end_session()
-                st.session_state.recording = False
-                if "error" not in summary:
-                    st.success("Session ended!")
-                else:
-                    st.warning(summary["error"])
-                st.rerun()
+            # Next exercise suggestion (if available)
+            if 'next_exercise_suggestion' in st.session_state and st.session_state.next_exercise_suggestion:
+                st.subheader("🎯 Next Exercise Suggestion")
+                st.info(st.session_state.next_exercise_suggestion['message'])
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Yes, let's begin!", key="accept_next_exercise", type="primary", use_container_width=True):
+                        # Start the suggested exercise
+                        suggestion = st.session_state.next_exercise_suggestion
+                        if suggestion.get('scale') and suggestion.get('tempo'):
+                            # Update scale and tempo
+                            st.session_state.selected_scale = suggestion['scale']
+                            st.session_state.selected_tempo = suggestion['tempo']
+                            st.session_state.scale_trainer.load_scale_by_name(suggestion['scale'])
+                            st.session_state.scale_trainer.set_tempo(suggestion['tempo'])
+                            
+                            # Start new session
+                            new_session = st.session_state.practice_orchestrator.start_autonomous_session(
+                                f"I want to practice {suggestion['scale']} at {suggestion['tempo']} BPM"
+                            )
+                            if new_session:
+                                st.session_state.recording = True
+                                st.session_state.scale_trainer.start_training()
+                                st.session_state.next_exercise_suggestion = None
+                                st.success(f"🚀 Started {suggestion['scale']} at {suggestion['tempo']} BPM!")
+                                st.rerun()
+                            else:
+                                st.error("Failed to start next exercise")
+                
+                with col2:
+                    if st.button("❌ No, thanks", key="decline_next_exercise", use_container_width=True):
+                        st.session_state.next_exercise_suggestion = None
+                        st.rerun()
             
-            if st.button("🔄 Restart Session", key="ai_restart_session", use_container_width=True):
-                st.session_state.practice_orchestrator.end_session()
-                st.rerun()
-        else:
-            # Start new session
-            st.info("Ready to start a new practice session!")
-            
-            student_input = st.text_area(
-                "What would you like to work on?",
-                placeholder="e.g., I want to practice C Major scale at 80 BPM, I want to improve my timing on G Major scale, etc.",
-                height=80,
-                key="ai_student_input"
+            # Chat input (always visible)
+            st.subheader("💭 Send Message")
+            user_message = st.text_input(
+                "Type your message:",
+                placeholder="Ask for help, request feedback, or ask questions...",
+                key="ai_chat_input"
             )
             
-            if st.button("🚀 Start AI Session", key="ai_start_session", type="primary", use_container_width=True):
-                if st.session_state.practice_orchestrator:
-                    # Start the AI-guided session
-                    session = st.session_state.practice_orchestrator.start_autonomous_session(student_input)
-                    if session:
-                        # Auto-update the scale and tempo based on AI session
-                        if session.current_scale:
-                            # Find and select the scale in the dropdown
-                            available_scales = st.session_state.scale_trainer.get_available_scales()
-                            scale_names = [scale['name'] for scale in available_scales]
-                            if session.current_scale in scale_names:
-                                # Update the scale trainer and session state
-                                st.session_state.scale_trainer.load_scale_by_name(session.current_scale)
-                                # Store the selected scale for the dropdown
-                                st.session_state.selected_scale = session.current_scale
-                                st.success(f"🎯 AI selected scale: {session.current_scale}")
-                        
-                        # Update tempo
-                        if session.tempo_bpm:
-                            st.session_state.scale_trainer.set_tempo(session.tempo_bpm)
-                            # Store the tempo for the slider
-                            st.session_state.selected_tempo = session.tempo_bpm
-                            st.success(f"🎵 AI set tempo: {session.tempo_bpm} BPM")
-                        
-                        # Auto-start recording
-                        st.session_state.recording = True
-                        st.session_state.scale_trainer.start_training()
-                        
-                        st.success(f"🚀 Started {session.current_scale} practice at {session.tempo_bpm} BPM!")
-                        st.rerun()
+            if st.button("Send", key="send_ai_message", use_container_width=True):
+                if user_message:
+                    # Add user message to chat history
+                    st.session_state.ai_chat_history.append({
+                        "role": "user",
+                        "content": user_message,
+                        "timestamp": time.time()
+                    })
+                    
+                    # Check if this is a practice request
+                    practice_keywords = ["practice", "start", "begin", "work on", "learn", "scale", "tempo", "bpm", "yes", "let's", "begin"]
+                    is_practice_request = any(keyword in user_message.lower() for keyword in practice_keywords)
+                    
+                    # Check if this is a response to next exercise suggestion
+                    is_next_exercise_response = False
+                    if st.session_state.next_exercise_suggestion and any(phrase in user_message.lower() for phrase in ["yes", "let's", "begin", "start", "practice"]):
+                        suggestion = st.session_state.next_exercise_suggestion
+                        if suggestion.get('scale') and suggestion.get('tempo'):
+                            is_next_exercise_response = True
+                    
+                    if is_practice_request and st.session_state.practice_orchestrator and not st.session_state.practice_orchestrator.has_active_session():
+                        # This is a practice request - start AI session immediately
+                        try:
+                            session = st.session_state.practice_orchestrator.start_autonomous_session(user_message)
+                            if session:
+                                # Only update scale if user specifically requested a different one
+                                if session.current_scale and session.current_scale != st.session_state.selected_scale:
+                                    # Check if user explicitly mentioned a different scale
+                                    user_scale_mentioned = any(scale_name.lower() in user_message.lower() for scale_name in [s['name'] for s in available_scales])
+                                    if user_scale_mentioned:
+                                        # User specifically requested different scale - update it
+                                        st.session_state.scale_trainer.load_scale_by_name(session.current_scale)
+                                        st.session_state.selected_scale = session.current_scale
+                                    # If no specific scale mentioned, keep current scale
+                                
+                                # Update tempo
+                                if session.tempo_bpm:
+                                    st.session_state.scale_trainer.set_tempo(session.tempo_bpm)
+                                    # Store the tempo for the slider
+                                    st.session_state.selected_tempo = session.tempo_bpm
+                                 
+                                # Auto-start recording
+                                st.session_state.recording = True
+                                st.session_state.scale_trainer.start_training()
+                                 
+                                # Add AI response to chat
+                                ai_response = f"🎯 **Starting Practice Session!**\n\n"
+                                ai_response += f"**Scale:** {st.session_state.selected_scale}\n"
+                                ai_response += f"**Tempo:** {session.tempo_bpm} BPM\n"
+                                ai_response += f"**Focus Areas:** {', '.join([area.value for area in session.focus_areas])}\n"
+                                ai_response += f"**Current Phase:** {session.current_phase.value.replace('_', ' ').title()}\n\n"
+                                ai_response += f"🚀 **Recording started!** Begin playing the {st.session_state.selected_scale} at {session.tempo_bpm} BPM."
+                                 
+                                st.session_state.ai_chat_history.append({
+                                    "role": "assistant",
+                                    "content": ai_response,
+                                    "timestamp": time.time()
+                                })
+                                 
+                                # Clear next exercise suggestion since we're starting a new session
+                                st.session_state.next_exercise_suggestion = None
+                                 
+                                st.rerun()
+                            else:
+                                # Failed to start session
+                                st.session_state.ai_chat_history.append({
+                                    "role": "assistant",
+                                    "content": "❌ Sorry, I couldn't start the practice session. Please try again or ask me for help.",
+                                    "timestamp": time.time()
+                                })
+                                st.rerun()
+                        except Exception as e:
+                            st.session_state.ai_chat_history.append({
+                                "role": "assistant",
+                                "content": f"❌ Error starting practice session: {str(e)}. Please try again.",
+                                "timestamp": time.time()
+                            })
+                            st.rerun()
+                    elif is_next_exercise_response:
+                        # User wants to start the suggested next exercise (same scale, increased tempo)
+                        suggestion = st.session_state.next_exercise_suggestion
+                        try:
+                            # Update tempo only (keep same scale)
+                            st.session_state.selected_tempo = suggestion['tempo']
+                            st.session_state.scale_trainer.set_tempo(suggestion['tempo'])
+                            
+                            # Start new session
+                            new_session = st.session_state.practice_orchestrator.start_autonomous_session(
+                                f"I want to practice {suggestion['scale']} at {suggestion['tempo']} BPM"
+                            )
+                            if new_session:
+                                st.session_state.recording = True
+                                st.session_state.scale_trainer.start_training()
+                                st.session_state.next_exercise_suggestion = None
+                                
+                                # Add confirmation to chat
+                                ai_response = f"🎯 **Starting Next Exercise!**\n\n"
+                                ai_response += f"**Scale:** {suggestion['scale']}\n"
+                                ai_response += f"**Tempo:** {suggestion['tempo']} BPM\n"
+                                ai_response += f"**Focus Areas:** {', '.join([area.value for area in new_session.focus_areas])}\n"
+                                ai_response += f"**Current Phase:** {new_session.current_phase.value.replace('_', ' ').title()}\n\n"
+                                ai_response += f"🚀 **Recording started!** Begin playing the {suggestion['scale']} at {suggestion['tempo']} BPM."
+                                
+                                st.session_state.ai_chat_history.append({
+                                    "role": "assistant",
+                                    "content": ai_response,
+                                    "timestamp": time.time()
+                                })
+                                
+                                st.rerun()
+                            else:
+                                st.error("Failed to start next exercise")
+                        except Exception as e:
+                            st.error(f"Error starting next exercise: {str(e)}")
                     else:
-                        st.error("Failed to start session. Please try again.")
-                else:
-                    st.error("Practice orchestrator not available.")
+                        # Regular chat message - get AI response
+                        if st.session_state.conversation_manager:
+                            response = st.session_state.conversation_manager.start_conversation(user_message)
+                            
+                            # Add AI response to chat history
+                            st.session_state.ai_chat_history.append({
+                                "role": "assistant",
+                                "content": response,
+                                "timestamp": time.time()
+                            })
+                            
+                            st.rerun()
+                        else:
+                            st.error("Conversation manager not available")
 
 
 def render_bottom_settings():
