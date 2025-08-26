@@ -486,6 +486,7 @@ def render_note_detection_mode():
             DEFAULT_ALGORITHM_MODE
         )
         st.rerun()
+        # st.rerun()
 
 
 def render_scale_training_mode():
@@ -591,7 +592,6 @@ def render_scale_training_mode():
                 DEFAULT_CONFIDENCE_THRESHOLD, 
                 DEFAULT_ALGORITHM_MODE
             )
-            st.rerun()
 
 
 def render_llm_analysis_section():
@@ -926,6 +926,7 @@ def render_ai_tutor_mode():
                     DEFAULT_ALGORITHM_MODE
                 )
                 st.rerun()
+
             else:
                 # Not recording - show minimal content
                 scale_visualization.markdown(render_scale_visualization())
