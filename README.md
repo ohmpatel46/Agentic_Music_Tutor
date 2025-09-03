@@ -1,5 +1,7 @@
 # Agentic_Music_Tutor
 
+🎵 **Check out the demo of the Agentic tutor on video in my [LinkedIn post](https://www.linkedin.com/posts/ohmpatel46_the-buzz-around-agentic-ai-and-ai-agents-activity-7365224547677122560-I8ou?utm_source=share&utm_medium=member_desktop&rcm=ACoAACzkXKcBUcLnMoK0EDx_cMk0srG6kf_liZc)!**
+
 An **autonomous AI-powered music learning application** that provides real-time feedback on scale practice with intelligent analysis, personalized insights, and **LangChain-powered agentic tutoring**.
 
 ## Features

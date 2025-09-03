@@ -36,11 +36,17 @@ HOP_SIZE = 256       # Processing window step size
 BUFFER_SIZE = 256    # Must match HOP_SIZE for aubio compatibility
 ```
 
-**Core Libraries**: The system leverages several powerful audio processing libraries:
-- **librosa**: For advanced audio analysis and feature extraction
-- **numpy**: For efficient numerical operations on audio arrays
-- **aubio**: For real-time pitch detection using multiple algorithms
-- **sounddevice**: For low-latency audio capture
+**Tech Stack:**
+- **Python** - Core programming language
+- **LangChain** - Agentic AI framework
+- **Ollama** - Local LLM inference
+- **Plotly** - Real-time audio visualizations
+- **Streamlit** - Web interface and state management
+- **CREPE** - Google's neural network pitch detection
+- **sounddevice** - Low-latency audio capture
+- **aubio** - Real-time pitch detection algorithms
+- **numpy** - Numerical operations on audio arrays
+- **librosa** - Audio analysis and feature extraction
 
 ### Pitch Detection Algorithms: The Multi-Approach Strategy
 
